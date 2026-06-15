@@ -36,6 +36,12 @@ jobs:
     - name: Pack Library to NuGet Structure
       run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./nupkg
 
+      # Get a short-lived NuGet API key
+    - name: NuGet login (OIDC → temp API key)
+      uses: NuGet/login@v1
+      id: login
+      with:
+        user: contoso-bot # Recommended: use a secret like ${{ secrets.NUGET_USER }} for your nuget.org username (profile name), NOT your email address
+
     - name: Push Package to NuGet.org
-      # Explicitly use the modern index URL and disable interactivity so OIDC triggers smoothly
-      run: dotnet nuget push ./nupkg/*.nupkg --source https://nuget.org --interactive false
+      run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --interactive false
