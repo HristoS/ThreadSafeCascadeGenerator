@@ -1,9 +1,14 @@
-ame: Publish NuGet Package
+name: Publish NuGet Package
 
 on:
   push:
     tags:
-      - 'v*' # Скриптът се активира при тагове като v1.0.0, v1.1.2 и т.н.
+      - 'v*' # Triggers on tags like v1.0.0, v1.1.2, etc.
+
+# Required for OpenID Connect (OIDC) Trusted Publishing
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   build-and-publish:
@@ -25,7 +30,8 @@ jobs:
       run: dotnet test --configuration Release --no-restore
 
     - name: Pack Library to NuGet Structure
-      run: dotnet pack CascadeRandom/CascadeRandom.csproj --configuration Release --output ./nupkg
+      run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./nupkg
 
     - name: Push Package to NuGet.org
-      run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://nuget.org
+      # Explicitly use the modern index URL and disable interactivity so OIDC triggers smoothly
+      run: dotnet nuget push ./nupkg/*.nupkg --source https://nuget.org --interactive false
