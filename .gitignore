@@ -1,0 +1,48 @@
+# --- Build Outputs ---
+[Bb]in/
+[Oo]bj/
+[Ex][Ee]/
+[Dd][Ll][Ll]/
+
+# --- Visual Studio ---
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- JetBrains Rider / ReSharper ---
+.idea/
+*.sln.DotSettings.user
+_ReSharper.*/
+
+# --- Visual Studio Code ---
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# --- Testing and Coverage ---
+TestResults/
+*.clog
+*.log
+*.trx
+*.coverage
+*.html
+
+# --- NuGet Packages ---
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+
+# --- Environment Secrets & Local Configs ---
+*.user
+appsettings.Development.json
+*.local.json
+
+# --- OS Generated Files ---
+.DS_Store
+Thumbs.db

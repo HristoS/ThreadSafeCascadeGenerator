@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- NuGet специфични настройки -->
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>CascadeRandom.Generator</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Hristo Stoew</Authors>
+    <Description>Highperformance cascade RNG generator, bases on 6-layers dinamick permutations for .NET 10 </Description>
+    <PackageTags>random;rng;cascade;thread-safe;performance</PackageTags>
+    <RepositoryUrl>https://github.com</RepositoryUrl>
+  </PropertyGroup>
+</Project>

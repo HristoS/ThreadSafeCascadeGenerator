@@ -1,0 +1,31 @@
+ame: Publish NuGet Package
+
+on:
+  push:
+    tags:
+      - 'v*' # Скриптът се активира при тагове като v1.0.0, v1.1.2 и т.н.
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 10 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore Dependencies
+      run: dotnet restore
+
+    - name: Run xUnit Tests
+      run: dotnet test --configuration Release --no-restore
+
+    - name: Pack Library to NuGet Structure
+      run: dotnet pack CascadeRandom/CascadeRandom.csproj --configuration Release --output ./nupkg
+
+    - name: Push Package to NuGet.org
+      run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://nuget.org
