@@ -58,5 +58,10 @@ jobs:
           echo "Received a token with a character length of: ${#TOKEN_VAL}"
         fi
 
+    # Feed the proven NUGET_API_KEY directly into the push script
     - name: Publish to NuGet
-      run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ steps.oidc_login.outputs.nuget-api-key }} --skip-duplicate
+      run: |
+        dotnet nuget push "./artifacts/*.nupkg" \
+          --source https://api.nuget.org/v3/index.json \
+          --api-key ${{ steps.oidc_login.outputs.NUGET_API_KEY }} \
+          --skip-duplicate
