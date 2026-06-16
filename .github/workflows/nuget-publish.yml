@@ -35,12 +35,28 @@ jobs:
     - name: Pack Library to NuGet Structure
       run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./artifacts
  
-    # Step 1: Exchange OIDC Token for a temporary NuGet API Key
+    # Step 1: Request the token from GitHub and exchange it with NuGet.org
     - name: NuGet Login
       uses: nuget/login@v1
       id: oidc_login
       with:
-        user: 'HristoS' # Must match your exact 
+        user: 'HristoS' # Your exact profile username
+
+    # Step 2: Safe evaluation without doing a real push
+    # If the token is empty, the length check (-z) catches it immediately
+    - name: Diagnose Token Output
+      run: |
+        TOKEN_VAL="${{ steps.oidc_login.outputs.NUGET_API_KEY }}"
+        
+        if [ -z "$TOKEN_VAL" ]; then
+          echo "❌ ERROR: The returned NuGet API key variable is completely empty!"
+          echo "This means NuGet.org rejected your repository metadata (Check Repo Owner or Workflow Name)."
+          exit 1
+        else
+          echo "✅ SUCCESS: The token handshake worked!"
+          # Masking output implicitly by GitHub prevents leakage, but we count characters to be sure.
+          echo "Received a token with a character length of: ${#TOKEN_VAL}"
+        fi
 
     - name: Publish to NuGet
       run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ steps.oidc_login.outputs.nuget-api-key }} --skip-duplicate
