@@ -2,8 +2,7 @@ name: Publish NuGet Package
 
 on:
   push:
-    tags:
-      - 'v*' # Triggers on tags like v1.0.0, v1.1.2, etc.
+    branches: [ "main" ]
 
 # Forces all JavaScript actions in this workflow to execute on Node.js 24
 env:
@@ -34,14 +33,7 @@ jobs:
       run: dotnet test --configuration Release --no-restore
 
     - name: Pack Library to NuGet Structure
-      run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./nupkg
-
-      # Get a short-lived NuGet API key
-    - name: NuGet login (OIDC → temp API key)
-      uses: NuGet/login@v1
-      id: login
-      with:
-        user: 'HristoS' # Recommended: use a secret like ${{ secrets.NUGET_USER }} for your nuget.org username (profile name), NOT your email address
+      run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./artifacts
 
     - name: Push Package to NuGet.org
-      run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --interactive false
+      run: dotnet nuget push "./artifacts/*.nupkg" --source https://nuget.org --skip-duplicate
