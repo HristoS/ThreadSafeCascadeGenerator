@@ -7,10 +7,23 @@
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>FastRng.ThreadSafe</PackageId>
     <Version>1.0.0</Version>
-    <Authors>Hristo Stoew</Authors>
-    <Description>Highperformance cascade RNG generator, bases on 6-layers dinamick permutations for .NET 10 </Description>
+    <Authors>HristoS</Authors>
+    <Description>An ultra-fast, thread-safe cascade random number generator (RNG) optimized for .NET 10.</Description>
     <PackageTags>random;rng;threadsafe;high-performance;cryptography;rc4;avalanche-effect;l1-cache;chi-squared;math;simulation</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+    <!-- Repository links for NuGet.org -->
     <RepositoryUrl>https://github.com/HristoS/ThreadSafeCascadeGenerator</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+     <!-- Forces compilation to include the ReadMe file on NuGet -->
+    <PackageReadmeFile>ReadMe.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Links your root ReadMe.md to the package root during 'dotnet pack' -->
+    <None Include="..\ReadMe.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
 </Project>

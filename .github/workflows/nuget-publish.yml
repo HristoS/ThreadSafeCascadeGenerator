@@ -1,51 +1,67 @@
-name: Publish NuGet Package
+name: Build & Publish to NuGet
 
 on:
   push:
-    branches: [ "main" ]
-
-# Forces all JavaScript actions in this workflow to execute on Node.js 24
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-# Required for OpenID Connect (OIDC) Trusted Publishing
-permissions:
-  id-token: write
-  contents: read
+    tags:
+      - 'v*.*.*' # Triggers automatically when you push a version tag like v1.0.3
 
 jobs:
-  build-and-publish:
+  build-and-test:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Setup .NET 10 SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '10.0.x'
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x' # Matches your .NET 10 optimization
 
-    - name: Restore Dependencies
-      run: dotnet restore
+      - name: Restore Dependencies
+        run: dotnet restore
 
-    - name: Run xUnit Tests
-      run: dotnet test --configuration Release --no-restore
+      - name: Compile Solution
+        run: dotnet build --configuration Release --no-restore
 
-    - name: Pack Library to NuGet Structure
-      run: dotnet pack src/FastRng.ThreadSafe.csproj --configuration Release --output ./artifacts
- 
+      - name: Run Unit Tests
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+  publish-nuget:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    environment: production # Connects to your NuGet production environment
+    permissions:
+      id-token: write # Mandatory permission token for secure passwordless login
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Extract Version From Tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Pack NuGet Package
+        run: |
+          dotnet pack src/FastRng.ThreadSafe.csproj.csproj --configuration Release \
+            -p:PackageVersion=${{ steps.get_version.outputs.VERSION }} \
+            --output ./artifacts
+
     # nuRequest the token from GitHub and exchange it with NuGet.org
-    - name: NuGet Login
-      uses: nuget/login@v1
-      id: oidc_login
-      with:
-        user: 'HristoS' # Your exact profile username
-
-    # Feed the proven NUGET_API_KEY directly into the push script
-    - name: Publish to NuGet
-      run: |
-        dotnet nuget push "./artifacts/*.nupkg" \
-          --source https://api.nuget.org/v3/index.json \
-          --api-key ${{ steps.oidc_login.outputs.NUGET_API_KEY }} \
-          --skip-duplicate
+      - name: NuGet Login
+        uses: nuget/login@v1
+        id: oidc_login
+        with:
+          user: 'HristoS' # Your exact profile username
+          
+      - name: Publish to NuGet.org
+        run: |
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key ${{ steps.oidc_login.outputs.NUGET_API_KEY }} \
+            --skip-duplicate
