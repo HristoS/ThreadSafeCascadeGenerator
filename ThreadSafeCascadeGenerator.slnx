@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="src/ThreadSafeCascadeGenerator.csproj" />
-  <Project Path="tests/benchmarks/ThreadSafeCascadeGenerator.benchmark.csproj" />
-  <Project Path="tests/reliability/ThreadSafeCascadeGenerator.tests.csproj" />
-</Solution>

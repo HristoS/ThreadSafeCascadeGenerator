@@ -1,4 +1,4 @@
-﻿# CascadeRandom.Generator
+﻿# FastRng.Generator
 
 An ultra-fast, thread-safe cascade random number generator (RNG) optimized for **.NET 10**.
 
@@ -54,12 +54,12 @@ The absolute cluster ceiling for natural random path clustering hits a predictab
 
 ## Installation
 ```bash
-NuGet\Install-Package CascadeRandom.Generator
+NuGet\Install-Package FastRng.Generator
 ```
 
 ## Quick Start
 ```csharp
-using CascadeRandom;
+using FastRng.ThreadSafe;
 
 // Access the lock-free, thread-isolated instance
 var rng = ThreadSafeCascadeGenerator.Instance;

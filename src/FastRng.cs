@@ -2,16 +2,16 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
-namespace CascadeRandom;
+namespace FastRng.ThreadSafe;
 
 /// <summary>
 /// A thread-safe pseudo-random number generator utilizing a multi-layer cascade matrix.
 /// Derived from <see cref="Random"/> to seamlessly replace standard generation methods.
 /// </summary>
-public class ThreadSafeCascadeGenerator : Random
+public class FastRng : Random
 {
     // Thread-local instance pattern guarantees thread safety without using locks
-    [ThreadStatic] private static ThreadSafeCascadeGenerator? _localInstance;
+    [ThreadStatic] private static FastRng? _localInstance;
 
     // Flattened 1D array representing 6 layers of 256-byte substitution matrices
     private readonly byte[] _flatMatrix;
@@ -25,7 +25,7 @@ public class ThreadSafeCascadeGenerator : Random
     /// <summary>
     /// Initializes internal state matrices, shuffles each layer, and warms up the generator.
     /// </summary>
-    private ThreadSafeCascadeGenerator()
+    private FastRng()
     {
         _flatMatrix = new byte[6 * 256];
 
@@ -50,7 +50,7 @@ public class ThreadSafeCascadeGenerator : Random
     /// <summary>
     /// Provides the singleton instance isolated to the current execution thread.
     /// </summary>
-    public static ThreadSafeCascadeGenerator Instance => _localInstance ??= new ThreadSafeCascadeGenerator();
+    public static FastRng Instance => _localInstance ??= new FastRng();
 
     /// <summary>
     /// Shuffles a designated 256-byte matrix layer using the Fisher-Yates algorithm.

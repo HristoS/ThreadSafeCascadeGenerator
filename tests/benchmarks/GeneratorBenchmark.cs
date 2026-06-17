@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 
-namespace CascadeRandom.Benchmarks;
+namespace FastRng.ThreadSafe.Benchmarks;
 
 // Маскираме алокацията и статистическия шум в конзолата
 [MemoryDiagnoser]
@@ -28,14 +28,14 @@ public class GeneratorBenchmark
     public int SystemRandom_Next() => _systemRandom.Next(0, 256);
 
     [Benchmark]
-    public byte CascadeRandom_NextByte() => ThreadSafeCascadeGenerator.Instance.NextByte();
+    public byte FastRng_NextByte() => FastRng.Instance.NextByte();
 
     // === ТЕСТ 2: ПОПЪЛВАНЕ НА ГОЛЯМ МАСИВ (64KB) ===
     [Benchmark]
     public void SystemRandom_NextBytes() => _systemRandom.NextBytes(_sharedBuffer);
 
     [Benchmark]
-    public void CascadeRandom_NextBytes() => ThreadSafeCascadeGenerator.Instance.NextBytes(_sharedBuffer);
+    public void FastRng_NextBytes() => FastRng.Instance.NextBytes(_sharedBuffer);
 }
 
 public class Program

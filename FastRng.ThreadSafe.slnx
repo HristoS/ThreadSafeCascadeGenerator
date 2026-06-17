@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/FastRng.ThreadSafe.csproj" />
+  <Project Path="tests/benchmarks/FastRng.ThreadSafe.benchmark.csproj" />
+  <Project Path="tests/reliability/FastRng.ThreadSafe.tests.csproj" />
+</Solution>

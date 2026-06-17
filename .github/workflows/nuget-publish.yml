@@ -33,9 +33,9 @@ jobs:
       run: dotnet test --configuration Release --no-restore
 
     - name: Pack Library to NuGet Structure
-      run: dotnet pack src/ThreadSafeCascadeGenerator.csproj --configuration Release --output ./artifacts
+      run: dotnet pack src/FastRng.ThreadSafe.csproj --configuration Release --output ./artifacts
  
-    # Request the token from GitHub and exchange it with NuGet.org
+    # nuRequest the token from GitHub and exchange it with NuGet.org
     - name: NuGet Login
       uses: nuget/login@v1
       id: oidc_login

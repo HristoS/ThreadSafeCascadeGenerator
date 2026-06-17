@@ -1,14 +1,14 @@
 using System.Collections.Concurrent;
 using Xunit;
 
-namespace CascadeRandom.Tests;
+namespace FastRng.ThreadSafe.Tests;
 
-public class CascadeGeneratorTests
+public class FastRngTests
 {
     [Fact]
     public void NextByte_ShouldReturnValuesWithinValidByteRange()
     {
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
 
         for (int i = 0; i < 1000; i++)
         {
@@ -20,7 +20,7 @@ public class CascadeGeneratorTests
     [Fact]
     public void NextBytes_Span_ShouldFillBufferCorrectly()
     {
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
         Span<byte> buffer = stackalloc byte[100];
 
         generator.NextBytes(buffer);
@@ -37,7 +37,7 @@ public class CascadeGeneratorTests
     [Fact]
     public void Next_WithBounds_ShouldRespectMinAndMax()
     {
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
         int min = 10;
         int max = 20;
 
@@ -51,7 +51,7 @@ public class CascadeGeneratorTests
     [Fact]
     public void Next_WithInvalidBounds_ShouldThrowArgumentException()
     {
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
 
         Assert.Throws<ArgumentOutOfRangeException>(() => generator.Next(50, 10));
     }
@@ -79,7 +79,7 @@ public class CascadeGeneratorTests
 
                 for (int j = 0; j < iterationsPerThread; j++)
                 {
-                    list.Add(ThreadSafeCascadeGenerator.Instance.NextByte());
+                    list.Add(FastRng.Instance.NextByte());
                 }
 
                 threadValues.TryAdd(threadId, list);
@@ -110,7 +110,7 @@ public class CascadeGeneratorTests
     public void Reliability_UniformDistributionTest()
     {
         // Arrange
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
         const int totalSamples = 5_000_000; // 1000 expected hits per bucket
         int[] buckets = new int[256];
 
@@ -141,7 +141,7 @@ public class CascadeGeneratorTests
     public void Reliability_PairwiseIndependenceTest()
     {
         // Arrange
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
         const int iterations = 10_000_000;
         int[,] pairGrid = new int[256, 256];
 
@@ -187,7 +187,7 @@ public class CascadeGeneratorTests
     public void Reliability_ChiSquaredMatrixTest()
     {
         // Arrange
-        var generator = ThreadSafeCascadeGenerator.Instance;
+        var generator = FastRng.Instance;
         const int iterations = 10_000_000;
         int[,] pairGrid = new int[256, 256];
 

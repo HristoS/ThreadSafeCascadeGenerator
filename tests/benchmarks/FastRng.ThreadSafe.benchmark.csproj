@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ThreadSafeCascadeGenerator.csproj" />
+    <ProjectReference Include="..\..\src\FastRng.ThreadSafe.csproj" />
   </ItemGroup>
 
 </Project>
