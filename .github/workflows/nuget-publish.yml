@@ -48,7 +48,7 @@ jobs:
 
       - name: Pack NuGet Package
         run: |
-          dotnet pack src/FastRng.ThreadSafe.csproj.csproj --configuration Release \
+          dotnet pack src/FastRng.ThreadSafe.csproj --configuration Release \
             -p:PackageVersion=${{ steps.get_version.outputs.VERSION }} \
             --output ./artifacts
 
