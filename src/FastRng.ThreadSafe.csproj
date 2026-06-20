@@ -13,9 +13,12 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <!-- Repository links for NuGet.org -->
-    <RepositoryUrl>https://github.com/HristoS/ThreadSafeCascadeGenerator</RepositoryUrl>
+    <RepositoryUrl>https://github.com/HristoS/FastRng.ThreadSafe</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
      <!-- Forces compilation to include the ReadMe file on NuGet -->
     <PackageReadmeFile>ReadMe.md</PackageReadmeFile>
