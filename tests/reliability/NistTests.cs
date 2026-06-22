@@ -1,6 +1,6 @@
 ﻿using Xunit;
 
-namespace FastRng.ThreadSafe.tests
+namespace FastRng.ThreadSafe.Tests
 {
     /// <summary>
     /// Implements native C# representations of the NIST SP 800-22 statistical test suite.
