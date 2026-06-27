@@ -113,6 +113,39 @@ namespace FastRng.ThreadSafe.Tests
             }
         }
 
+        /// <summary>
+        /// REGULATORY TEST 3: State Back-Tracing and Algebraic Attack Simulation.
+        /// Evaluates if an observer catching 1,028 sequential bytes (the size of your state matrix)
+        /// can construct an explicit linear solution to find the initial state matrix.
+        /// </summary>
+        [Fact]
+        public void Cryptographic_ForwardSecrecy_LinearAttackSimulation()
+        {
+            var generator = FastRng.Instance;
+            byte[] observedLeak = new byte[1028];
+            generator.NextBytes(observedLeak);
+
+            // Attempt a basic linear difference map to find matrix loop correlation
+            int linearDependencies = 0;
+            for (int i = 0; i < observedLeak.Length - 4; i++)
+            {
+                // Check if subsequent outputs share a constant linear difference
+                // injected by the simplistic '& 3' or '& 0x300' mask transitions
+                int diff1 = (observedLeak[i + 1] - observedLeak[i]) & 255;
+                int diff2 = (observedLeak[i + 3] - observedLeak[i + 2]) & 255;
+                if (diff1 == diff2)
+                {
+                    linearDependencies++;
+                }
+            }
+
+            // In a true cryptographically secure generator (CSPRNG), linear relationships
+            // across output streams evaluate exactly to 0.39% chance per sample.
+            double dependencyRatio = (double)linearDependencies / observedLeak.Length;
+            Assert.True(dependencyRatio < 0.05,
+                $"GLI Security Failure! Output streams reveal heavy algebraic linearity ({dependencyRatio:P2}). State is predictable.");
+        }
+
         [Fact]
         public void Test_Strict_Modulo_Bias_Elimination()
         {

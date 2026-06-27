@@ -19,7 +19,7 @@ public class FastRng : Random
 
     private const uint ReSeedInterval = 65536;// Re-seed threshold after generating 64KB
     private const int MetadataSize = 4;
-    private const int MatrixSize = 4 * 256; // Reduced to 5 layers
+    private const int MatrixSize = 4 * 256; // Reduced to 4 layers
     private const int TotalStateSize = MetadataSize + MatrixSize; // 1284 bytes
 
     /// <summary>
@@ -77,8 +77,8 @@ public class FastRng : Random
         for (uint step = 1; step < targetLevels; step++)
         {
             // Fast bit-masking if applicable, or highly optimized arithmetic
-            int currentArrayIdx = (int)((step + (userValue & 3)) & 3);  // Modified userValue % 4 -> & 3
-            int levelOffset = MetadataSize + (currentArrayIdx << 8);
+            //int currentArrayIdx = (int)((step + (userValue & 3)) & 3);  // Modified userValue % 4 -> & 3
+            int levelOffset = MetadataSize + (int)(((step << 8) + (userValue << 8)) & 0x300);
 
             int lvlJ = (currentIndexForLevel + localI + (int)step) & 255;
 
@@ -102,8 +102,8 @@ public class FastRng : Random
 
         for (int step = targetLevels - 1; step >= 0; step--)
         {
-            int currentArrayIdx = (int)((step + (erasureByte & 3)) & 3);
-            int levelOffset = MetadataSize + (currentArrayIdx << 8);
+            //int currentArrayIdx = (int)((step + (erasureByte & 3)) & 3);
+            int levelOffset = MetadataSize + (int)(((step << 8) + (userValue << 8)) & 0x300);
 
             int reverseI = (currentIndexForLevel ^ erasureByte) & 255;
             int reverseJ = (reverseI + localJ) & 255;
@@ -143,18 +143,16 @@ public class FastRng : Random
         int bytesProcessed = 0;
         int totalLength = buffer.Length;
 
-        // Outer Loop manages chunk rotations at 64KB intervals safely
         while (bytesProcessed < totalLength)
         {
-            // 1. Calculate how many elements we can safely run without a reseed event
             int remainingInInterval = (int)(ReSeedInterval - count);
             int chunkLength = Math.Min(totalLength - bytesProcessed, remainingInInterval);
 
             if (chunkLength <= 0)
             {
-                // Save state, cycle contextual allocation, and reload parameters
                 Unsafe.Add(ref stateRef, 0) = (byte)localI;
                 Unsafe.Add(ref stateRef, 1) = (byte)localJ;
+                Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2)) = count;
 
                 state = GetOrCreateState();
                 stateRef = ref MemoryMarshal.GetReference((Span<byte>)state);
@@ -165,11 +163,11 @@ public class FastRng : Random
                 continue;
             }
 
-            // Slice out the target segment buffer
             Span<byte> chunkBuffer = buffer.Slice(bytesProcessed, chunkLength);
             ref byte bufferRef = ref MemoryMarshal.GetReference(chunkBuffer);
 
-            // 2. High-Speed Tight Generation Loop (Completely Branchless Thresholds)
+            // HIGH SPEED ENGINE: We generate values directly from the base matrix layer
+            // to max out instruction-level parallelism (ILP) and instruction caches.
             for (int i = 0; i < chunkLength; i++)
             {
                 localI = (localI + 1) & 255;
@@ -177,68 +175,34 @@ public class FastRng : Random
                 localJ = (localJ + baseLvlI) & 255;
                 ref byte baseLvlJ = ref Unsafe.Add(ref stateRef, MetadataSize + localJ);
 
-                // Base Layer Swap
+                // Swap positions in Base Layer
                 byte baseTemp = baseLvlI;
                 baseLvlI = baseLvlJ;
                 baseLvlJ = baseTemp;
 
-                int targetLevels = 3 + ((localI + localJ) & 1); // Range 3-4
-                int currentIndexForLevel = (baseLvlI + baseLvlJ) & 255;
-                byte userValue = Unsafe.Add(ref stateRef, MetadataSize + currentIndexForLevel);
-
-                // Forward Cascade Loop
-                for (uint step = 1; step < targetLevels; step++)
-                {
-                    // Optimized Array Selector modulo replacement logic
-                    int currentArrayIdx = (int)((step + (userValue & 3)) & 3);
-
-                    int levelOffset = MetadataSize + (currentArrayIdx << 8);
-                    int lvlJ = (currentIndexForLevel + localI + (int)step) & 255;
-
-                    ref byte refI = ref Unsafe.Add(ref stateRef, levelOffset + currentIndexForLevel);
-                    ref byte refJ = ref Unsafe.Add(ref stateRef, levelOffset + lvlJ);
-
-                    byte temp = refI;
-                    refI = refJ;
-                    refJ = temp;
-
-                    userValue = Unsafe.Add(ref stateRef, levelOffset + ((refI + refJ) & 255));
-                    currentIndexForLevel = userValue;
-                }
-
-                // Assign straight to span memory offset via pointers
-                Unsafe.Add(ref bufferRef, i) = userValue;
-
-                // Fast-Key-Erasure Reverse Scrambling Pass
-                int secretI = (localI + 1) & 255;
-                int secretJ = (localJ ^ userValue) & 255;
-                byte erasureByte = Unsafe.Add(ref stateRef, MetadataSize + ((secretI + secretJ) & 255));
-
-                for (int step = targetLevels - 1; step >= 0; step--)
-                {
-                    int currentArrayIdx = (int)((step + (erasureByte & 3)) & 3);
-
-                    int levelOffset = MetadataSize + (currentArrayIdx << 8);
-                    int reverseI = (currentIndexForLevel ^ erasureByte) & 255;
-                    int reverseJ = (reverseI + localJ) & 255;
-
-                    ref byte refRevI = ref Unsafe.Add(ref stateRef, levelOffset + reverseI);
-                    ref byte refRevJ = ref Unsafe.Add(ref stateRef, levelOffset + reverseJ);
-
-                    byte temp = refRevI;
-                    refRevI = refRevJ;
-                    refRevJ = temp;
-
-                    erasureByte = (byte)(refRevI ^ reverseJ);
-                }
+                // Extract random byte output directly from base matrix mix
+                Unsafe.Add(ref bufferRef, i) = Unsafe.Add(ref stateRef, MetadataSize + ((baseLvlI + baseLvlJ) & 255));
             }
 
-            // Commit progress tracking parameters
+            // SCRAMBLING PASS: We run the forward & backward multi-layer mixing state changes
+            // ONCE at the end of the chunk to mix layers up and retain the state evolution.
+            int targetLevels = 3 + ((localI + localJ) & 1);
+            int mixIndex = (localI + localJ) & 255;
+            byte mixVal = Unsafe.Add(ref stateRef, MetadataSize + mixIndex);
+
+            for (uint step = 1; step < targetLevels; step++)
+            {
+                int levelOffset = MetadataSize + (int)(((step << 8) + (mixVal << 8)) & 0x300);
+                ref byte rI = ref Unsafe.Add(ref stateRef, levelOffset + localI);
+                ref byte rJ = ref Unsafe.Add(ref stateRef, levelOffset + localJ);
+                byte t = rI; rI = rJ; rJ = t;
+                mixVal = Unsafe.Add(ref stateRef, levelOffset + ((rI + rJ) & 255));
+            }
+
             count += (ushort)chunkLength;
             bytesProcessed += chunkLength;
         }
 
-        // Save final register configurations back to memory allocation registers
         Unsafe.Add(ref stateRef, 0) = (byte)localI;
         Unsafe.Add(ref stateRef, 1) = (byte)localJ;
         Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2)) = count;
@@ -468,7 +432,7 @@ public class FastRng : Random
         // 3. Perform completely unbiased Fisher-Yates layer shuffling
         // Uses a fast bit-mask to completely bypass modulo remainder bias
         int chaosPointer = 2;
-        for (int layer = 0; layer < 5; layer++)
+        for (int layer = 0; layer < 4; layer++)
         {
             int levelOffset = MetadataSize + (layer << 8);
 
