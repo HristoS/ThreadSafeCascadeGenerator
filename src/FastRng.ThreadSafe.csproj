@@ -28,6 +28,10 @@
 
     <!-- Deterministic builds for Source Link -->
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <PackageProjectUrl>https://ko-fi.com/hristostoev</PackageProjectUrl>
+    <Description>If you like it, you could support me at Ko-fi: https://ko-fi.com/hristostoev </Description>
+
   </PropertyGroup>
 
   <ItemGroup>
