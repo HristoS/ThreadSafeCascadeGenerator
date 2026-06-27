@@ -6,7 +6,7 @@
 
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>FastRng.ThreadSafe</PackageId>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <Authors>HristoS</Authors>
     <Description>An ultra-fast, thread-safe cascade random number generator (RNG) optimized for .NET 10.</Description>
     <PackageTags>random;rng;threadsafe;high-performance;cryptography;rc4;avalanche-effect;l1-cache;chi-squared;math;simulation</PackageTags>
