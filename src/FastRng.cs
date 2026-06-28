@@ -1,5 +1,4 @@
-﻿using System.Numerics;
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
@@ -11,43 +10,55 @@ namespace FastRng.ThreadSafe;
 /// </summary>
 public class FastRng : Random
 {
-    // High-speed ThreadStatic cache layer to bypass heavy AsyncLocal lookups
-    [ThreadStatic] private static byte[]? _tsCache;
+    // Thread-local instance pattern guarantees thread safety without using locks
+    [ThreadStatic] private static FastRng? _localInstance;
 
-    private static readonly AsyncLocal<byte[]?> _localState = new();
-    private static readonly object _lock = new();
+    // Flattened 1D array representing 6 layers of 256-byte substitution matrices
+    [ThreadStatic] private byte[] _flatMatrix;
 
-    private const uint ReSeedInterval = 65535;// Re-seed threshold after generating 64KB
-    private const int MetadataSize = 4;
-    private const int MatrixSize = 16 * 256; // Reduced to 4 layers
-    private const int TotalStateSize = MetadataSize + MatrixSize; // 1284 bytes
+    [ThreadStatic] private int _i;
+    [ThreadStatic] private int _j;
+
+    [ThreadStatic] private uint _generatedBytesCount;
+    private const uint ReSeedInterval = 65536; // Re-seed threshold after generating 64KB
+    private const uint layerCount = 16;
 
     /// <summary>
     /// Initializes internal state matrices, shuffles each layer, and warms up the generator.
     /// </summary>
     private FastRng()
     {
+        _flatMatrix = new byte[layerCount * 256];
+
+        // Fill layers with sequential values from 0 to 255
+        for (int m = 0; m < layerCount; m++)
+        {
+            int offset = m << 8;
+            for (int k = 0; k < 256; k++) _flatMatrix[offset + k] = (byte)k;
+        }
+
+        // Randomize the initial state pointers using cryptographic entropy
+        _i = RandomNumberGenerator.GetInt32(256);
+        _j = RandomNumberGenerator.GetInt32(256);
     }
 
     /// <summary>
-    /// Gets the context-safe instance for the current execution flow.
+    /// Provides the singleton instance isolated to the current execution thread.
     /// </summary>
-    public static FastRng Instance
+    public static FastRng Instance => _localInstance ??= new FastRng();
+
+    /// <summary>
+    /// Shuffles a designated 256-byte matrix layer using the Fisher-Yates algorithm.
+    /// </summary>
+    private void ShuffleLayer(int layerIndex)
     {
-        get
+        int offset = layerIndex << 8;
+        for (int k = 255; k > 0; k--)
         {
-            if (_localInstance == null)
-            {
-                lock (_lock)
-                {
-                    _localInstance ??= new FastRng();
-                }
-            }
-            return _localInstance;
+            int idx = RandomNumberGenerator.GetInt32(k + 1);
+            (_flatMatrix[offset + k], _flatMatrix[offset + idx]) = (_flatMatrix[offset + idx], _flatMatrix[offset + k]);
         }
     }
-
-    private static FastRng? _localInstance;
 
     /// <summary>
     /// Generates a single pseudo-random byte using multi-layered cascade mutations.
@@ -55,192 +66,112 @@ public class FastRng : Random
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte NextByte()
     {
-        byte[] state = GetOrCreateState();
-        ref byte stateRef = ref MemoryMarshal.GetReference((Span<byte>)state);
-
-        int localI = Unsafe.Add(ref stateRef, 0);
-        int localJ = Unsafe.Add(ref stateRef, 1);
-        ushort count = Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2));
-
-        ref byte matrixPtr = ref Unsafe.Add(ref stateRef, MetadataSize);
-
-        localI = (localI + 1) & 255;
-        ref byte baseLvlI = ref Unsafe.Add(ref matrixPtr, localI << 4);
-        localJ = (localJ + baseLvlI) & 255;
-        ref byte baseLvlJ = ref Unsafe.Add(ref matrixPtr, localJ << 4);
-
-        byte baseTemp = baseLvlI;
-        baseLvlI = baseLvlJ;
-        baseLvlJ = baseTemp;
-
-        int dynamicLevels = 6 + (((localI ^ localJ) * 9) & 15);
-
-        int currentIndexForLevel = (baseLvlI + baseLvlJ) & 255;
-        byte userValue = Unsafe.Add(ref matrixPtr, currentIndexForLevel << 4);
-
-        // --- 1. Forward Pass ---
-        int forwardStepMultiplier = 59;
-        int targetLayer;
-        //ulong layerStackLow = 0UL, layerStackHigh = 0UL;
-
-        for (int step = 1; step < dynamicLevels; step++)
+        _generatedBytesCount++;
+        if (_generatedBytesCount >= ReSeedInterval)
         {
-            targetLayer = (step ^ localI ^ userValue) & 15;
-
-            int indexBitOffset = currentIndexForLevel << 4;
-            int lvlJBitOffset = ((currentIndexForLevel ^ localI ^ forwardStepMultiplier) & 255) << 4;
-            forwardStepMultiplier = (forwardStepMultiplier + 59) & 255;
-
-            ref byte refI = ref Unsafe.Add(ref matrixPtr, indexBitOffset | targetLayer);
-            ref byte refJ = ref Unsafe.Add(ref matrixPtr, lvlJBitOffset | targetLayer);
-
-            currentIndexForLevel = (refI + refJ) & 255;
-            userValue = Unsafe.Add(ref matrixPtr, (currentIndexForLevel << 4) | targetLayer);
+            InjectHardwareEntropy();
         }
 
-        // --- 2. Reverse Scrambling Pass ---
-        int secretI = (localI + 1) & 255;
-        int secretJ = (localJ ^ userValue) & 255;
-        byte erasureByte = Unsafe.Add(ref matrixPtr, ((secretI + secretJ) & 255) << 4);
+        // Increment pointer index for the primary layer
+        _i = (_i + 1) & 255;
+        Span<byte> matrixSpan = _flatMatrix;
+        ref byte matrixRef = ref MemoryMarshal.GetReference(matrixSpan);
 
-        int reverseStepMultiplier = (dynamicLevels - 1) * 101;
-        int constantPart = localJ + ((localJ >> 2) ^ 0xAA);
-        int reverseI, reverseJ;
+        int currentOffset = 0;
+        int dynamicStep = Unsafe.Add(ref matrixRef, currentOffset + _i);
+        _j = (_j + dynamicStep) & 255;
+        int entryIndex = (_i + dynamicStep) & 255;
 
-        for (int step = dynamicLevels - 1; step >= 0; step--)
+        // Perform standard byte swap on the base layer
+        (Unsafe.Add(ref matrixRef, currentOffset + entryIndex), Unsafe.Add(ref matrixRef, currentOffset + _j)) =
+        (Unsafe.Add(ref matrixRef, currentOffset + _j), Unsafe.Add(ref matrixRef, currentOffset + entryIndex));
+
+        // Extract intermediate state value
+        int nextIndex = (Unsafe.Add(ref matrixRef, currentOffset + entryIndex) + Unsafe.Add(ref matrixRef, currentOffset + _j)) & 255;
+        uint value = Unsafe.Add(ref matrixRef, currentOffset + nextIndex);
+
+        // Calculate dynamic cascade deepness (ranging from 3 to 6 steps)
+        uint targetLevels = (value % 4) + 3;
+        int currentIndexForLevel = (int)value;
+
+        // Propagate state modifications down through the underlying matrix layers
+        for (uint step = 1; step < targetLevels; step++)
         {
-            targetLayer = (step ^ localI ^ userValue) & 15;
+            int currentArrayIdx = (int)((step + (value % 5)) % 6);
+            int levelOffset = currentArrayIdx << 8;
 
-            reverseI = (currentIndexForLevel ^ erasureByte) & 255;
-            reverseJ = (reverseI + constantPart + reverseStepMultiplier) & 255;
-            reverseStepMultiplier -= 101;
+            int localI = currentIndexForLevel;
+            int localJ = (localI + _i + dynamicStep) & 255;
 
-            ref byte refRevI = ref Unsafe.Add(ref matrixPtr, (reverseI << 4) | targetLayer);
-            ref byte refRevJ = ref Unsafe.Add(ref matrixPtr, (reverseJ << 4) | targetLayer);
+            // Execute conditional swap in the target cascade layer
+            (Unsafe.Add(ref matrixRef, levelOffset + localI), Unsafe.Add(ref matrixRef, levelOffset + localJ)) =
+            (Unsafe.Add(ref matrixRef, levelOffset + localJ), Unsafe.Add(ref matrixRef, levelOffset + localI));
 
-            byte temp = refRevI; refRevI = refRevJ; refRevJ = temp;
-            erasureByte = (byte)(refRevI ^ reverseJ);
+            int finalIndex = (Unsafe.Add(ref matrixRef, levelOffset + localI) + Unsafe.Add(ref matrixRef, levelOffset + localJ)) & 255;
+            value = Unsafe.Add(ref matrixRef, levelOffset + finalIndex);
+
+            currentIndexForLevel = (int)value;
         }
 
-        // Final output mixer
-        uint mix = ((uint)(userValue ^ (userValue >> 4)) * 31U) & 0xFFU;
-        byte result = (byte)(mix ^ (mix >> 3));
-
-        count++;
-
-        Unsafe.Add(ref stateRef, 0) = (byte)localI;
-        Unsafe.Add(ref stateRef, 1) = (byte)localJ;
-        Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2)) = count;
-
-        return result;
+        return (byte)value;
     }
 
     /// <summary>
     /// Highly optimized array/span generation strategy.
     /// Inlines internal generation loop directly to avoid the overhead of individual NextByte calls.
     /// </summary>
-    public void NextBytes(Span<byte> buffer)
+    public override void NextBytes(Span<byte> buffer)
     {
         if (buffer.IsEmpty) return;
 
-        byte[] state = GetOrCreateState();
-        ref byte stateRef = ref MemoryMarshal.GetReference((Span<byte>)state);
-
-        int localI = Unsafe.Add(ref stateRef, 0);
-        int localJ = Unsafe.Add(ref stateRef, 1);
-        ushort count = Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2));
-
-        ref byte matrixPtr = ref Unsafe.Add(ref stateRef, MetadataSize);
-
-        int targetLayer, reverseI, reverseJ;
-
-        for (int i = 0; i < buffer.Length; i++)
+        // Accumulate entire buffer length at once to avoid updating counter sequentially
+        _generatedBytesCount += (uint)buffer.Length;
+        if (_generatedBytesCount >= ReSeedInterval)
         {
-            localI = (localI + 1) & 255;
-            ref byte baseLvlI = ref Unsafe.Add(ref matrixPtr, localI << 4);
-            localJ = (localJ + baseLvlI) & 255;
-            ref byte baseLvlJ = ref Unsafe.Add(ref matrixPtr, localJ << 4);
-
-            byte baseTemp = baseLvlI;
-            baseLvlI = baseLvlJ;
-            baseLvlJ = baseTemp;
-
-            int dynamicLevels = 6 + (((localI ^ localJ) * 9) & 15);
-
-            int currentIndexForLevel = (baseLvlI + baseLvlJ) & 255;
-            byte userValue = Unsafe.Add(ref matrixPtr, currentIndexForLevel << 4);
-
-            // --- 1. Forward Pass (READ-ONLY) ---
-            int forwardStepMultiplier = 59;
-
-            for (int step = 1; step < dynamicLevels; step++)
-            {
-                targetLayer = (step ^ localI ^ userValue) & 15;
-
-                int indexBitOffset = currentIndexForLevel << 4;
-                int lvlJBitOffset = ((currentIndexForLevel ^ localI ^ forwardStepMultiplier) & 255) << 4;
-                forwardStepMultiplier = (forwardStepMultiplier + 59) & 255;
-
-                ref byte refI = ref Unsafe.Add(ref matrixPtr, indexBitOffset | targetLayer);
-                ref byte refJ = ref Unsafe.Add(ref matrixPtr, lvlJBitOffset | targetLayer);
-
-                currentIndexForLevel = (refI + refJ) & 255;
-                userValue = Unsafe.Add(ref matrixPtr, (currentIndexForLevel << 4) | targetLayer);
-            }
-
-            // --- 2. Reverse Scrambling Pass (MUTATING) ---
-            int secretI = (localI + 1) & 255;
-            int secretJ = (localJ ^ userValue) & 255;
-            byte erasureByte = Unsafe.Add(ref matrixPtr, ((secretI + secretJ) & 255) << 4);
-
-            int reverseStepMultiplier = (dynamicLevels - 1) * 101;
-            int constantPart = localJ + ((localJ >> 2) ^ 0xAA);
-
-            for (int step = dynamicLevels - 1; step >= 0; step--)
-            {
-                targetLayer = (step ^ localI ^ userValue) & 15;
-
-                reverseI = (currentIndexForLevel ^ erasureByte) & 255;
-                reverseJ = (reverseI + constantPart + reverseStepMultiplier) & 255;
-                reverseStepMultiplier -= 101;
-
-                ref byte refRevI = ref Unsafe.Add(ref matrixPtr, (reverseI << 4) | targetLayer);
-                ref byte refRevJ = ref Unsafe.Add(ref matrixPtr, (reverseJ << 4) | targetLayer);
-
-                byte temp = refRevI; refRevI = refRevJ; refRevJ = temp;
-                erasureByte = (byte)(refRevI ^ reverseJ);
-            }
-
-            uint mix = ((uint)(userValue ^ (userValue >> 4)) * 31U) & 0xFFU;
-            buffer[i] = (byte)(mix ^ (mix >> 3));
-
-            count++;
-            if (count >= ReSeedInterval)
-            {
-                // 1. Fetch quick entropy directly into local registers without matrix re-allocations
-                // We only need 4 bytes to completely refresh our running variables
-                uint freshEntropy = 0U;
-
-                // Create a 4-byte Span pointing directly to freshEntropy without an unsafe block
-                Span<byte> entropySpan = MemoryMarshal.AsBytes(MemoryMarshal.CreateSpan(ref freshEntropy, 1));
-                RandomNumberGenerator.Fill(entropySpan);
-
-                // 2. Perturb running counters directly using the fresh entropy
-                localI = (localI ^ (int)(freshEntropy & 0xFFU)) & 255;
-                localJ = (localJ ^ (int)((freshEntropy >> 8) & 0xFFU)) & 255;
-
-                // 3. Shake up the base matrix layer position lightly using the remaining entropy bits
-                int shakeIndex = (int)((freshEntropy >> 16) & 0xFFU);
-                Unsafe.Add(ref matrixPtr, shakeIndex << 4) ^= (byte)(freshEntropy >> 24);
-
-                count = 0; // Reset the streaming interval back to zero cleanly
-            }
+            InjectHardwareEntropy();
         }
 
-        // Single structured write back to the active state block upon completing the array fill
-        Unsafe.Add(ref stateRef, 0) = (byte)localI;
-        Unsafe.Add(ref stateRef, 1) = (byte)localJ;
-        Unsafe.As<byte, ushort>(ref Unsafe.Add(ref stateRef, 2)) = count;
+        Span<byte> matrixSpan = _flatMatrix;
+        ref byte matrixRef = ref MemoryMarshal.GetReference(matrixSpan);
+
+        // Directly fill the memory buffer without checking interval state boundaries per byte
+        for (int b = 0; b < buffer.Length; b++)
+        {
+            _i = (_i + 1) & 255;
+
+            int currentOffset = 0;
+            int dynamicStep = Unsafe.Add(ref matrixRef, currentOffset + _i);
+            _j = (_j + dynamicStep) & 255;
+            int entryIndex = (_i + dynamicStep) & 255;
+
+            (Unsafe.Add(ref matrixRef, currentOffset + entryIndex), Unsafe.Add(ref matrixRef, currentOffset + _j)) =
+            (Unsafe.Add(ref matrixRef, currentOffset + _j), Unsafe.Add(ref matrixRef, currentOffset + entryIndex));
+
+            int nextIndex = (Unsafe.Add(ref matrixRef, currentOffset + entryIndex) + Unsafe.Add(ref matrixRef, currentOffset + _j)) & 255;
+            uint value = Unsafe.Add(ref matrixRef, currentOffset + nextIndex);
+
+            uint targetLevels = (value % 4) + 3;
+            int currentIndexForLevel = (int)value;
+
+            for (uint step = 1; step < targetLevels; step++)
+            {
+                int currentArrayIdx = (int)((step + (value % 5)) % 6);
+                int levelOffset = currentArrayIdx << 8;
+
+                int localI = currentIndexForLevel;
+                int localJ = (localI + _i + dynamicStep) & 255;
+
+                (Unsafe.Add(ref matrixRef, levelOffset + localI), Unsafe.Add(ref matrixRef, levelOffset + localJ)) =
+                (Unsafe.Add(ref matrixRef, levelOffset + localJ), Unsafe.Add(ref matrixRef, levelOffset + localI));
+
+                int finalIndex = (Unsafe.Add(ref matrixRef, levelOffset + localI) + Unsafe.Add(ref matrixRef, levelOffset + localJ)) & 255;
+                value = Unsafe.Add(ref matrixRef, levelOffset + finalIndex);
+
+                currentIndexForLevel = (int)value;
+            }
+
+            buffer[b] = (byte)value;
+        }
     }
 
     /// <summary>
@@ -258,7 +189,7 @@ public class FastRng : Random
     public override int Next()
     {
         // Extract 31 bits to ensure the value is always non-negative
-        return (int)(this.NextUInt32() & 0x7FFFFFFF);
+        return (int)(this.NextUInt64() & 0x7FFFFFFF);
     }
 
     /// <summary>
@@ -266,8 +197,10 @@ public class FastRng : Random
     /// </summary>
     public override int Next(int maxValue)
     {
-        if (maxValue <= 0) throw new ArgumentOutOfRangeException(nameof(maxValue));
-        return Next(0, maxValue);
+        if (maxValue < 0) throw new ArgumentOutOfRangeException(nameof(maxValue), "Value must be non-negative.");
+        if (maxValue == 0) return 0;
+
+        return (int)(this.NextDouble() * maxValue);
     }
 
     /// <summary>
@@ -275,53 +208,47 @@ public class FastRng : Random
     /// </summary>
     public override int Next(int minValue, int maxValue)
     {
-        if (minValue > maxValue) throw new ArgumentOutOfRangeException("minValue must be less than maxValue");
+        if (minValue > maxValue)
+            throw new ArgumentOutOfRangeException(nameof(minValue), "MinValue must be less than or equal to maxValue.");
 
-        long range = (long)maxValue - minValue;
-        if (range <= 1) return minValue;
+        if (minValue == maxValue) return minValue;
 
-        // Optimized Bit-Mask Rejection Sampling Engine
-        // Eliminates modulo bias while maximizing execution pipeline efficiency
-        int powerOfTwoMask = (int)BitOperations.RoundUpToPowerOf2((ulong)range) - 1;
+        uint range = (uint)(maxValue - minValue);
+        if (range == 1) return minValue;
 
-        while (true)
+        // Calculate the rejection boundary to prevent statistical clustering
+        uint limit = uint.MaxValue - (uint.MaxValue % range);
+        uint sample;
+
+        do
         {
-            int randomVal = (int)(NextUInt32() & powerOfTwoMask); if (randomVal < range)
-            {
-                return minValue + randomVal;
-            }
+            // Leverage your ultra-fast 64-bit internal cascade register
+            sample = (uint)(NextUInt64() & 0xFFFFFFFFUL);
         }
+        while (sample >= limit);
+
+        return (int)(minValue + (sample % range));
     }
 
     /// <summary>
     /// Generates a random floating-point number greater than or equal to 0.0, and less than 1.0.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override double NextDouble()
     {
-        // Pulls 53 bits of raw random entropy and multiplies by scale factor
-        // This completely eliminates slow floating-point CPU division operations
-        const double scale = 1.0 / (1L << 53);
-        ulong random64 = NextUInt64();
-        return (random64 >> 11) * scale;
+        // Equivalent to standard 53-bit resolution mapping for IEEE 754 doubles
+        return (NextUInt64() & 0x001FFFFFFFFFFFFFUL) * (1.0 / 9007199254740992.0);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private uint NextUInt32()
-    {
-        // Unrolls 4 fast sequential iterations inline to avoid stack allocations
-        uint val = (uint)NextByte() << 24;
-        val |= (uint)NextByte() << 16;
-        val |= (uint)NextByte() << 8;
-        val |= NextByte();
-        return val;
-    }
-
+    /// <summary>
+    /// Private utility method to compose a 64-bit unsigned integer using the internal span loop.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ulong NextUInt64()
     {
-        ulong val = NextUInt32();
-        return val | ((ulong)NextUInt32() << 32);
+        Unsafe.SkipInit(out ulong value);
+        Span<byte> buffer = MemoryMarshal.AsBytes(MemoryMarshal.CreateSpan(ref value, 1));
+        this.NextBytes(buffer);
+        return value;
     }
 
     /// <summary>
@@ -366,25 +293,18 @@ public class FastRng : Random
         uint range = (uint)(maxValue - minValue);
         if (range == 1) return minValue;
 
-        // Fast-range selection: multiplication instead of modulo
-        uint x = NextUInt32();
-        ulong m = (ulong)x * (ulong)range;
-        uint l = (uint)m;
+        // Calculate the rejection threshold to eliminate bias
+        uint limit = uint.MaxValue - (uint.MaxValue % range);
+        uint sample;
 
-        // Rare rejection case for absolute uniformity
-        if (l < range)
+        do
         {
-            uint t = unchecked((uint)-(int)range) % range;
-            while (l < t)
-            {
-                x = NextUInt32();
-                m = (ulong)x * (ulong)range;
-                l = (uint)m;
-            }
+            // Re-use your ultra-fast 64-bit sequence
+            sample = (uint)(NextUInt64() & 0xFFFFFFFFUL);
         }
+        while (sample >= limit);
 
-        // Explicitly cast the shifted ulong to uint to fix ambiguity
-        return (int)(minValue + (uint)(m >> 32));
+        return (int)(minValue + (sample % range));
     }
 
     /// <summary>
@@ -411,107 +331,35 @@ public class FastRng : Random
         Shuffle(array.AsSpan());
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private byte[] GetOrCreateState()
+    /// <summary>
+    /// Inject fresh hardware entropy harvested from the OS layer into internal matrix states.
+    /// Defends state alignment against prediction and state reconstruction analysis.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InjectHardwareEntropy()
     {
-        // Fast path: synchronous local cache hit
-        var state = _tsCache;
+        _generatedBytesCount = 0;
 
-        if (state != null)
+        // Retrieve strong cryptographic chaos directly from the operating system
+        Span<byte> hardwareChaos = stackalloc byte[16];
+        RandomNumberGenerator.Fill(hardwareChaos);
+
+        Span<byte> matrixSpan = _flatMatrix;
+        ref byte matrixRef = ref MemoryMarshal.GetReference(matrixSpan);
+
+        // Mix hardware entropy across all matrix layers via strategic target cell swapping
+        for (int m = 0; m < layerCount; m++)
         {
-            ref byte countRef = ref state[2];
-            if (Unsafe.As<byte, ushort>(ref countRef) < ReSeedInterval)
-            {
-                return state;
-            }
+            int levelOffset = m << 8;
+            int targetCellA = hardwareChaos[m] & 255;
+            int targetCellB = hardwareChaos[(m + 1) % 8] & 255;
+
+            (Unsafe.Add(ref matrixRef, levelOffset + targetCellA), Unsafe.Add(ref matrixRef, levelOffset + targetCellB)) =
+            (Unsafe.Add(ref matrixRef, levelOffset + targetCellB), Unsafe.Add(ref matrixRef, levelOffset + targetCellA));
         }
 
-        // Slow path: fallback to AsyncLocal dictionary context and rotation
-        state = _localState.Value;
-        if (state == null)
-        {
-            state = InitializeNewState();
-            _localState.Value = state;
-        }
-        else
-        {
-            ref byte countRef = ref state[2];
-            if (Unsafe.As<byte, ushort>(ref countRef) >= ReSeedInterval)
-            {
-                state = InitializeNewState();
-                _localState.Value = state;
-            }
-        }
-
-        _tsCache = state;
-        return state;
-    }
-
-    private byte[] InitializeNewState()
-    {
-        var state = new byte[TotalStateSize];
-        ref byte matrixRef = ref MemoryMarshal.GetReference((Span<byte>)state);
-
-        // 1. Map identity sequences (0 to 255) to all 5 layers safely
-        for (int layer = 0; layer < 16; layer++)
-        {
-            //int offset = MetadataSize + (layer << 8);
-            for (int val = 0; val < 256; val++)
-            {
-                Unsafe.Add(ref matrixRef, (val << 4) | layer) = (byte)val;
-                //Unsafe.Add(ref matrixRef, offset + val) = (byte)val;
-            }
-        }
-
-        // 2. Fetch a single heavy cryptographic entropy buffer from the OS
-        // 1024 bytes completely isolates 5 independent shuffle tracks
-        Span<byte> heavyChaos = stackalloc byte[1024];
-        RandomNumberGenerator.Fill(heavyChaos);
-
-        // Seed initial state registers with pristine randomness
-        Unsafe.Add(ref matrixRef, 0) = 0; // localI start
-        Unsafe.Add(ref matrixRef, 1) = 0; // localJ start
-        Unsafe.As<byte, ushort>(ref Unsafe.Add(ref matrixRef, 2)) = 0; // count start
-
-        // 3. Perform completely unbiased Fisher-Yates layer shuffling
-        // Uses a fast bit-mask to completely bypass modulo remainder bias
-        int chaosPointer = 2;
-        for (int layer = 0; layer < 16; layer++)
-        {
-            int levelOffset = MetadataSize + (layer << 8);
-
-            for (int i = 255; i > 0; i--)
-            {
-                // Calculate the exact next power of 2 bitmask for index 'i'
-                int powerOfTwoMask = (1 << (32 - BitOperations.LeadingZeroCount((uint)i))) - 1;
-                int j;
-
-                while (true)
-                {
-                    // Pull a byte from our pool, mask it, and reject if it overflows bounds
-                    j = (heavyChaos[chaosPointer & 1023] ^ layer) & powerOfTwoMask;
-                    chaosPointer++;
-
-                    // Refill pool on the fly if we exhaust the 1024 bytes during rejection steps
-                    if (chaosPointer >= 1024)
-                    {
-                        RandomNumberGenerator.Fill(heavyChaos);
-                        chaosPointer = 0;
-                    }
-
-                    if (j <= i) break;
-                }
-
-                // Perform the cell mutation swap
-                ref byte refI = ref Unsafe.Add(ref matrixRef, levelOffset + i);
-                ref byte refJ = ref Unsafe.Add(ref matrixRef, levelOffset + j);
-
-                byte temp = refI;
-                refI = refJ;
-                refJ = temp;
-            }
-        }
-
-        return state;
+        // Apply dedicated chaos indexes [6] and [7] to securely perturb pointer positions
+        _i = (_i ^ hardwareChaos[6]) & 255;
+        _j = (_j ^ hardwareChaos[7]) & 255;
     }
 }
